@@ -4,8 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0f9d76">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="熱量計算">
 <title>拍照熱量計算機</title>
-<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22%E6%8B%8D%E7%85%A7%E7%86%B1%E9%87%8F%E8%A8%88%E7%AE%97%E6%A9%9F%22%2C%22short_name%22%3A%22%E7%86%B1%E9%87%8F%22%2C%22display%22%3A%22standalone%22%2C%22start_url%22%3A%22.%22%2C%22theme_color%22%3A%22%230f9d76%22%2C%22background_color%22%3A%22%23f5f7f6%22%7D">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="favicon.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
 :root{--g:#0f9d76;--g2:#e6f5f0;--bg:#f5f7f6;--card:#fff;--t:#1d2b27;--m:#6b7a76;--r:#d9534f;--b:#e3e8e6}
 *{box-sizing:border-box}
@@ -62,11 +68,19 @@ details summary{cursor:pointer;font-weight:600;font-size:16px}
 .hist{font-size:14px}
 .hist div{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f0f2f1;cursor:pointer}
 .warnbox{background:#fff8e6;border:1px solid #f3dfa8;border-radius:10px;padding:8px 10px;font-size:13px;margin-top:8px}
+.install-bar{display:none;align-items:center;gap:8px;margin:0 0 10px;padding:10px 12px;background:var(--g2);border-radius:12px;border:1px dashed #b9d9cf;flex-wrap:wrap}
+.install-bar.show{display:flex}
+#updateBar{position:fixed;left:50%;top:10px;transform:translateX(-50%);background:var(--g);color:#fff;padding:10px 18px;border-radius:999px;font-size:14px;font-weight:600;cursor:pointer;z-index:60;box-shadow:0 4px 16px rgba(15,157,118,.4);display:none;white-space:nowrap}
+#updateBar.show{display:block}
 </style>
 </head>
 <body>
 <main>
 <h1>🍱 拍照熱量計算機</h1>
+<div id="installBar" class="install-bar">
+  <button type="button" id="installBtn" class="pri" hidden>⬇️ 安裝 APP</button>
+  <div id="iosHint" class="muted" hidden>在 iPhone 請用 Safari 打開，點下方分享按鈕（方框加向上箭頭），再選「加入主畫面」，就能像 APP 一樣使用。</div>
+</div>
 
 <!-- 日期與今日總覽 -->
 <section class="card" id="summaryCard">
@@ -176,6 +190,7 @@ details summary{cursor:pointer;font-weight:600;font-size:16px}
 
 <div class="modal" id="modal"><div class="box"><div id="modalBody"></div><div class="row" id="modalBtns" style="margin-top:12px;justify-content:flex-end"></div></div></div>
 <div id="toast"></div>
+<div id="updateBar">有新版本，點此更新</div>
 
 <script>
 // 營養資料（每 100 g 可食部分）：k=熱量 kcal, p=蛋白質 g, f=脂肪 g, c=碳水 g, fb=膳食纖維 g, na=鈉 mg
@@ -762,10 +777,68 @@ $('aiBtn').onclick=async()=>{
   finally{$('aiBtn').disabled=false}
 };
 
-// ───────────────── 離線支援 ─────────────────
-if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol)){
-  navigator.serviceWorker.register('sw.js').then(()=>{$('offlineNote').textContent='✅ 已啟用離線快取：載入過一次後，沒有網路也能開啟（含照片辨識）。'}).catch(()=>{$('offlineNote').textContent='手動輸入與紀錄離線可用；照片辨識需網路下載模型（瀏覽器會快取）。'});
-}else{$('offlineNote').textContent='手動輸入、營養表與紀錄完全離線可用；照片辨識第一次需要網路下載模型，之後由瀏覽器快取。'}
+// ───────────────── 離線支援與 PWA ─────────────────
+(function(){
+  const standalone=window.matchMedia('(display-mode: standalone)').matches||!!window.navigator.standalone;
+  const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  const installBar=$('installBar'), installBtn=$('installBtn'), iosHint=$('iosHint');
+  if(standalone){
+    installBar.classList.remove('show');
+  }else if(isIOS){
+    installBar.classList.add('show');
+    installBtn.hidden=true;
+    iosHint.hidden=false;
+  }
+  let deferredPrompt=null;
+  window.addEventListener('beforeinstallprompt',e=>{
+    e.preventDefault();
+    deferredPrompt=e;
+    if(!standalone){
+      installBar.classList.add('show');
+      installBtn.hidden=false;
+      iosHint.hidden=true;
+    }
+  });
+  window.addEventListener('appinstalled',()=>{
+    deferredPrompt=null;
+    installBar.classList.remove('show');
+  });
+  installBtn.addEventListener('click',async()=>{
+    if(!deferredPrompt)return;
+    deferredPrompt.prompt();
+    try{await deferredPrompt.userChoice}catch(e){}
+    deferredPrompt=null;
+    installBar.classList.remove('show');
+  });
+
+  if(!('serviceWorker' in navigator)||!/^https?:$/.test(location.protocol)){
+    $('offlineNote').textContent='手動輸入、營養表與紀錄完全離線可用；照片辨識第一次需要網路下載模型，之後由瀏覽器快取。';
+    return;
+  }
+  function showUpdateBanner(worker){
+    const bar=$('updateBar');
+    bar.classList.add('show');
+    bar.onclick=()=>{
+      bar.textContent='正在更新…';
+      if(worker)worker.postMessage({type:'SKIP_WAITING'});
+      location.reload();
+    };
+  }
+  navigator.serviceWorker.register('./sw.js',{scope:'./'}).then(reg=>{
+    $('offlineNote').textContent='✅ 已啟用離線快取：載入過一次後，沒有網路也能開啟（含照片辨識）。可安裝成 APP 使用。';
+    const watch=sw=>{
+      if(!sw)return;
+      sw.addEventListener('statechange',()=>{
+        if(sw.state==='installed'&&navigator.serviceWorker.controller)showUpdateBanner(sw);
+      });
+    };
+    if(reg.waiting&&navigator.serviceWorker.controller)showUpdateBanner(reg.waiting);
+    watch(reg.installing);
+    reg.addEventListener('updatefound',()=>watch(reg.installing));
+  }).catch(()=>{
+    $('offlineNote').textContent='手動輸入與紀錄離線可用；照片辨識需網路下載模型（瀏覽器會快取）。';
+  });
+})();
 if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
 
 loadSettingsUI();renderAll();renderPreview();
