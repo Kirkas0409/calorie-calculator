@@ -38,7 +38,18 @@ input[type=text],input[type=number],input[type=password],input[type=date],select
 .photo-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .photo-btns label{display:flex;align-items:center;justify-content:center;gap:6px;padding:14px 8px;border-radius:12px;border:2px dashed #b9d9cf;background:var(--g2);font-weight:600;cursor:pointer}
 .photo-btns input{display:none}
-#preview{max-width:100%;max-height:240px;border-radius:10px;display:none;margin:10px auto 0}
+#previewWrap{position:relative;display:none;width:fit-content;max-width:100%;margin:10px auto 0}
+#previewWrap.show{display:block}
+#preview{max-width:100%;max-height:280px;border-radius:10px;display:block;touch-action:none}
+#cropRect{position:absolute;border:2px solid var(--g);background:rgba(15,157,118,.2);display:none;pointer-events:none;box-sizing:border-box}
+#previewWrap.cropping{cursor:crosshair}
+.rec-item{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #f0f2f1}
+.rec-item input[type=checkbox]{width:20px;height:20px;flex:none;accent-color:var(--g)}
+.rec-item .rn{flex:1;min-width:0;font-weight:600}
+.rec-item .rn small{font-weight:400;color:var(--m);margin-left:4px}
+.rec-item .rpor{width:92px;padding:6px 8px}
+.rec-item .rk{white-space:nowrap;font-weight:700;color:var(--g);font-size:14px;min-width:72px;text-align:right}
+
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .chip{border:1px solid #b9d9cf;background:#fff;border-radius:999px;padding:6px 11px;font-size:14px;cursor:pointer}
 .chip.top{background:var(--g);color:#fff;border-color:var(--g)}
@@ -112,9 +123,22 @@ details summary{cursor:pointer;font-weight:600;font-size:16px}
     <label>📸 拍照<input type="file" id="camInput" accept="image/*" capture="environment"></label>
     <label>🖼️ 選擇照片<input type="file" id="fileInput" accept="image/*"></label>
   </div>
-  <img id="preview" alt="食物照片">
-  <div class="muted" id="recStatus" style="margin-top:8px">第一次辨識會下載約 88 MB 的影像模型（之後會快取）。手動輸入不需要模型。</div>
+  <div id="previewWrap">
+    <img id="preview" alt="食物照片">
+    <div id="cropRect"></div>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button type="button" id="bentoBtn" class="sm">🍱 便當快速組合</button>
+    <button type="button" id="cropBtn" class="sm" hidden>🔲 框選辨識</button>
+    <button type="button" id="cropCancel" class="sm" hidden>取消框選</button>
+    <button type="button" id="addMoreBtn" class="sm" hidden>再加一樣</button>
+  </div>
+  <div class="muted" id="recStatus" style="margin-top:8px">第一次辨識會下載約 88 MB 的影像模型（之後會快取）。一張照片會嘗試找出多種食物，再請你勾選確認。手動輸入不需要模型。</div>
   <div class="chips" id="cands"></div>
+  <div id="recList"></div>
+  <div class="row" id="recActions" style="margin-top:8px;display:none">
+    <button type="button" id="addRecBtn" class="pri">＋ 加入選取的項目</button>
+  </div>
   <div class="row" id="aiRow" style="margin-top:8px;display:none">
     <button id="aiBtn" class="sm">🔬 用 AI 高精準辨識（含份量估計）</button>
   </div>
@@ -826,9 +850,45 @@ $('protIn').onchange=()=>{const v=parseInt($('protIn').value);SET.prot=v>0?v:0;s
 $('aiSave').onclick=()=>{SET.ai={prov:$('aiProv').value,base:$('aiBase').value.trim(),model:$('aiModel').value.trim(),key:$('aiKey').value.trim()};save(LS_SET,SET);updAiUI();toast('已儲存 AI 設定（只存在此瀏覽器）')};
 $('aiClear').onclick=()=>{SET.ai.key='';$('aiKey').value='';save(LS_SET,SET);updAiUI();toast('已清除金鑰')};
 
-// ───────────────── 照片辨識（瀏覽器內 CLIP 模型）─────────────────
+// ───────────────── 照片辨識（瀏覽器內 CLIP 模型，多食物區塊辨識）─────────────────
 const TF_URL='https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2/dist/transformers.min.js';
-let model=null, modelLoading=null, textEmb=null, lastImageBlob=null;
+let model=null, modelLoading=null, textEmb=null, lastImageBlob=null, lastPreviewImg=null;
+let recItems=[]; // {id,name,food,portion,score,source,checked}
+let cropMode=false;
+
+const SIM_GROUPS=[
+  ['白飯','糙米飯','稀飯'],
+  ['滷肉飯','雞肉飯'],
+  ['雞腿便當','排骨便當'],
+  ['白吐司','全麥吐司','法式吐司'],
+  ['茶葉蛋','水煮蛋'],
+  ['荷包蛋','班尼迪克蛋','歐姆蛋'],
+  ['燙青菜','花椰菜','海帶芽沙拉','生菜沙拉'],
+  ['水餃','煎餃','小籠包'],
+  ['牛肉麵','拉麵','陽春麵','鍋燒意麵','越南河粉'],
+  ['義大利麵(紅醬)','義大利麵(白醬)'],
+  ['凱薩沙拉','希臘沙拉'],
+  ['炸雞','炸雞排','炸雞翅','鹽酥雞']
+];
+const COMPOSITE_FOODS=new Set(['雞腿便當','排骨便當']);
+const RICE_FOODS=new Set(['白飯','糙米飯']);
+const SIDE_FOODS=new Set(['燙青菜','生菜沙拉','花椰菜','滷味','海帶芽沙拉','毛豆','板豆腐','味噌湯']);
+const EGG_FOODS=new Set(['茶葉蛋','水煮蛋','荷包蛋']);
+const BENTO_PRESET=[
+  {n:'白飯',portion:'1碗',checked:true},
+  {n:'雞腿(去皮)',portion:'1份',checked:false},
+  {n:'豬排',portion:'1片',checked:false},
+  {n:'炸雞排',portion:'1片',checked:false},
+  {n:'牛排',portion:'1份',checked:false},
+  {n:'鯖魚',portion:'1片',checked:false},
+  {n:'雞胸肉',portion:'1份',checked:false},
+  {n:'燙青菜',portion:'半份',checked:true},
+  {n:'茶葉蛋',portion:'1顆',checked:false},
+  {n:'荷包蛋',portion:'1顆',checked:false},
+  {n:'滷味',portion:'半份',checked:false},
+  {n:'味噌湯',portion:'1碗',checked:false}
+];
+
 function decodeEmb(){
   const bin=atob(EMB.b64), u16=new Uint16Array(bin.length/2);
   for(let i=0;i<u16.length;i++)u16[i]=bin.charCodeAt(2*i)|(bin.charCodeAt(2*i+1)<<8);
@@ -865,32 +925,249 @@ async function resizeImage(file,max=768){
     return await new Promise(r=>c.toBlob(r,'image/jpeg',0.88));
   }finally{URL.revokeObjectURL(url)}
 }
-async function classify(blob){
+function blobToImage(blob){
+  return new Promise((res,rej)=>{
+    const url=URL.createObjectURL(blob);
+    const img=new Image();
+    img.onload=()=>{URL.revokeObjectURL(url);res(img)};
+    img.onerror=()=>{URL.revokeObjectURL(url);rej(new Error('無法讀取圖片'))};
+    img.src=url;
+  });
+}
+function cropImage(img,box){
+  const c=document.createElement('canvas');
+  c.width=Math.max(16,Math.round(box.w));
+  c.height=Math.max(16,Math.round(box.h));
+  c.getContext('2d').drawImage(img,box.x,box.y,box.w,box.h,0,0,c.width,c.height);
+  return new Promise(r=>c.toBlob(r,'image/jpeg',0.9));
+}
+async function logitsFromBlob(blob){
   const m=await loadModel();
-  setStatus('辨識中…');
-  const t0=performance.now();
   const image=await m.T.RawImage.fromBlob(blob);
   const inputs=await m.processor(image);
   const {image_embeds}=await m.vision(inputs);
-  const v=image_embeds.data, D=EMB.dim; let n=0;for(let j=0;j<D;j++)n+=v[j]*v[j];n=Math.sqrt(n);
-  const logits=[];for(let i=0;i<EMB.n;i++){let s=0;for(let j=0;j<D;j++)s+=v[j]*textEmb[i*D+j];logits.push(100*s/n)}
-  const mx=Math.max(...logits), ex=logits.map(x=>Math.exp(x-mx)), Z=ex.reduce((a,b)=>a+b,0);
-  const res=ex.map((e,i)=>({name:EMB.names[i],score:e/Z})).sort((a,b)=>b.score-a.score).slice(0,5);
-  return {res,ms:performance.now()-t0};
+  const v=image_embeds.data, D=EMB.dim;
+  let n=0;for(let j=0;j<D;j++)n+=v[j]*v[j];n=Math.sqrt(n);
+  const logits=new Float32Array(EMB.n);
+  for(let i=0;i<EMB.n;i++){let s=0;for(let j=0;j<D;j++)s+=v[j]*textEmb[i*D+j];logits[i]=100*s/n}
+  return logits;
 }
+function softmaxArr(logits){
+  let mx=-Infinity; for(const x of logits) if(x>mx) mx=x;
+  const ex=new Float32Array(logits.length); let Z=0;
+  for(let i=0;i<logits.length;i++){const e=Math.exp(logits[i]-mx);ex[i]=e;Z+=e}
+  for(let i=0;i<ex.length;i++) ex[i]/=Z;
+  return ex;
+}
+function rankedFromLogits(logits,k=5){
+  const sm=softmaxArr(logits);
+  return Array.from(sm,(s,i)=>({name:EMB.names[i],score:s,logit:logits[i]})).sort((a,b)=>b.score-a.score).slice(0,k);
+}
+function gridBoxes(w,h){
+  const boxes=[{tag:'full',x:0,y:0,w,h}];
+  const n=3, overlap=0.22, size=(1+overlap)/n, step=n>1?(1-size)/(n-1):0;
+  for(let iy=0;iy<n;iy++){
+    for(let ix=0;ix<n;ix++){
+      const tw=Math.round(size*w), th=Math.round(size*h);
+      const x=Math.round(ix*step*w), y=Math.round(iy*step*h);
+      boxes.push({tag:'g'+iy+ix,x,y,w:Math.min(tw,w-x),h:Math.min(th,h-y)});
+    }
+  }
+  return boxes;
+}
+function aggregateTiles(tiles){
+  const n=EMB.n;
+  const maxSm=new Float32Array(n), maxLog=new Float32Array(n);
+  const sources=Array(n).fill('');
+  const top1hits=Array(n).fill(0), nearHits=Array(n).fill(0);
+  for(const t of tiles){
+    let best=-1,bestS=-1,bestL=-Infinity;
+    for(let i=0;i<n;i++){
+      if(t.sm[i]>maxSm[i]){maxSm[i]=t.sm[i];maxLog[i]=t.logits[i];sources[i]=t.tag}
+      if(t.sm[i]>bestS){bestS=t.sm[i];best=i}
+      if(t.logits[i]>bestL)bestL=t.logits[i];
+    }
+    if(best>=0) top1hits[best]++;
+    for(let i=0;i<n;i++){
+      if(t.logits[i]>=bestL-4.5 && t.logits[i]>=24) nearHits[i]++;
+    }
+  }
+  const picked=new Map();
+  const consider=(i)=>{
+    if(i<0||i>=n)return;
+    const cur=picked.get(i);
+    const row={name:EMB.names[i],score:maxSm[i],logit:maxLog[i],tile:sources[i],hits:top1hits[i],near:nearHits[i]};
+    if(!cur||row.score>cur.score) picked.set(i,row);
+  };
+  for(const t of tiles){
+    if(!t.top)continue;
+    // 每個區塊的前 3 名（softmax 會壓制同格配菜，所以門檻較低）
+    for(let k=0;k<Math.min(3,t.top.length);k++){
+      if(k===0||t.top[k].score>=0.08||t.top[k].logit>=t.top[0].logit-4.5) consider(EMB.names.indexOf(t.top[k].name));
+    }
+    let bestL=-Infinity; for(const x of t.logits) if(x>bestL)bestL=x;
+    for(let i=0;i<n;i++){
+      if(t.logits[i]>=bestL-4.5 && t.logits[i]>=25) consider(i);
+    }
+  }
+  let list=[...picked.values()].filter(x=>x.score>=0.06||x.near>=2||x.hits>=1).sort((a,b)=>b.score-a.score);
+  const names=new Set(list.map(x=>x.name));
+  if([...RICE_FOODS].some(x=>names.has(x))){
+    list=list.filter(x=>!COMPOSITE_FOODS.has(x.name)||x.score>0.55);
+  }
+  for(const g of SIM_GROUPS){
+    const items=list.filter(x=>g.includes(x.name)).sort((a,b)=>{
+      if(g.includes('白飯')&&Math.abs(a.score-b.score)<0.15){
+        if(a.name==='白飯')return -1; if(b.name==='白飯')return 1;
+      }
+      return (b.hits-a.hits)||(b.score-a.score);
+    });
+    if(items.length<=1)continue;
+    const keep=new Set([items[0].name]);
+    for(const x of items.slice(1)){
+      if(x.hits>=items[0].hits&&x.score>=items[0].score*0.85&&x.score>=0.25) keep.add(x.name);
+    }
+    list=list.filter(x=>!g.includes(x.name)||keep.has(x.name));
+  }
+  // 優先保留各區塊第一名，避免配菜被高分主菜擠出清單
+  const top1=new Set();
+  for(const t of tiles){ if(t.top&&t.top[0]&&t.top[0].score>=0.15) top1.add(t.top[0].name); }
+  const head=[], tail=[];
+  for(const x of list){
+    if(!(top1.has(x.name)||x.hits>=1||x.score>=0.10)) continue;
+    (top1.has(x.name)?head:tail).push(x);
+  }
+  return head.concat(tail).slice(0,10);
+}
+function defaultRecPortion(food,multi){
+  if(!food)return '1份';
+  if(!multi)return '1'+(food.d||'份');
+  if(RICE_FOODS.has(food.n))return '1碗';
+  if(EGG_FOODS.has(food.n))return '1'+(food.d||'顆');
+  if(food.n==='味噌湯')return '1碗';
+  if(SIDE_FOODS.has(food.n)&&food.u&&food.u['份'])return '半份';
+  return '1'+(food.d||'份');
+}
+async function classify(blob){
+  // 相容舊測試：整張圖的前 5 名
+  const logits=await logitsFromBlob(blob);
+  return {res:rankedFromLogits(logits,5),ms:0};
+}
+async function classifyMulti(blob,onProgress){
+  const img=await blobToImage(blob);
+  const boxes=gridBoxes(img.naturalWidth,img.naturalHeight);
+  const tiles=[];
+  const t0=performance.now();
+  for(let i=0;i<boxes.length;i++){
+    if(onProgress)onProgress(i,boxes.length);
+    const b=boxes[i];
+    const part=b.tag==='full'?blob:await cropImage(img,b);
+    const logits=await logitsFromBlob(part);
+    const sm=softmaxArr(logits);
+    tiles.push({tag:b.tag,logits,sm,top:rankedFromLogits(logits,5)});
+  }
+  const cands=aggregateTiles(tiles);
+  return {tiles,cands,ms:performance.now()-t0,img};
+}
+
+function recCalc(item){
+  if(!item.food)return null;
+  const por=parsePortion(item.portion,item.food);
+  if(!por||por.error)return null;
+  return Object.assign(calcEntry(item.food,por.grams),{portion:por.label,note:por.note,food:item.food});
+}
+function syncRecActions(){
+  const n=recItems.filter(x=>x.checked).length;
+  const bar=$('recActions'), btn=$('addRecBtn');
+  bar.style.display=recItems.length?'flex':'none';
+  btn.textContent=`＋ 加入選取的 ${n} 項`;
+  btn.disabled=!n;
+  $('addMoreBtn').hidden=!lastImageBlob&&!recItems.length;
+}
+function renderRecList(){
+  const box=$('recList'); box.innerHTML='';
+  for(const it of recItems){
+    const row=document.createElement('div'); row.className='rec-item';
+    const calc=recCalc(it);
+    const score=it.score!=null?`<small>${r0(it.score*100)}%</small>`:(it.source==='ai'?'<small>AI</small>':'');
+    row.innerHTML=`<input type="checkbox" ${it.checked?'checked':''} aria-label="選取 ${esc(it.name)}">
+      <div class="rn">${esc(it.name)}${score}</div>
+      <input type="text" class="rpor" value="${esc(it.portion||'')}" aria-label="${esc(it.name)} 份量">
+      <div class="rk">${calc?calc.k+' kcal':'—'}</div>`;
+    const [cb, , por]=[row.children[0],row.children[1],row.children[2]];
+    cb.onchange=()=>{it.checked=cb.checked;syncRecActions()};
+    por.onchange=por.oninput=()=>{it.portion=por.value.trim()||it.portion;const c=recCalc(it);row.querySelector('.rk').textContent=c?c.k+' kcal':'—';};
+    box.appendChild(row);
+  }
+  if(recItems.length){
+    const hint=document.createElement('div');
+    hint.className='muted'; hint.style.marginTop='6px';
+    hint.textContent='可勾選多樣、修改份量後一次加入。若不對，用「框選辨識」或下方手動輸入。';
+    box.appendChild(hint);
+  }
+  syncRecActions();
+}
+function makeRecItem(food,opts={}){
+  const multi=opts.multi!=null?opts.multi:recItems.length>=1;
+  return {
+    id:uid(), name:food.n, food, portion:opts.portion||defaultRecPortion(food,multi||opts.forceMulti),
+    score:opts.score, source:opts.source||'clip', checked:!!opts.checked
+  };
+}
+function upsertRecFood(food,opts={}){
+  const ex=recItems.find(x=>x.name===food.n);
+  if(ex){
+    if(opts.portion)ex.portion=opts.portion;
+    if(opts.score!=null&&(ex.score==null||opts.score>ex.score))ex.score=opts.score;
+    if(opts.checked)ex.checked=true;
+    if(opts.source)ex.source=opts.source;
+    return ex;
+  }
+  const it=makeRecItem(food,opts);
+  recItems.push(it);
+  return it;
+}
+function recItemsFromCands(cands){
+  const multi=cands.length>1;
+  const items=[];
+  for(const c of cands){
+    const f=FOODS.find(x=>x.n===c.name); if(!f)continue;
+    items.push(makeRecItem(f,{score:c.score,source:'clip',forceMulti:multi,checked:false}));
+  }
+  const dominant=items.length===1||(items[0]&&items[0].score>=0.8)||(items[0]&&items[0].score>=0.40&&(!items[1]||items[1].score<items[0].score*0.4));
+  if(dominant&&items[0]){
+    items[0].checked=true;
+    items[0].portion=defaultRecPortion(items[0].food,false);
+  }else{
+    let n=0;
+    for(const it of items){
+      const hit=cands.find(c=>c.name===it.name);
+      it.checked=(it.score>=0.28||(hit&&hit.hits>=2&&it.score>=0.20))&&n<5;
+      if(it.checked)n++;
+    }
+  }
+  return {items,dominant:!!(dominant&&items[0]),multi};
+}
+
 async function onPhoto(file){
   if(!file)return;
-  $('cands').innerHTML='';
+  $('cands').innerHTML=''; recItems=[]; renderRecList();
   try{
     const blob=await resizeImage(file); lastImageBlob=blob; updAiUI();
-    const pv=$('preview');pv.src=URL.createObjectURL(blob);pv.style.display='block';
-    const {res,ms}=await classify(blob);
-    window.__lastPreds=res;
-    setStatus(`辨識完成（${(ms/1000).toFixed(1)} 秒）。點選最像的食物，再修改份量：`+(res[0].score<0.35?' ⚠️ 信心不高，請確認或直接手動輸入。':''));
-    res.forEach((r,i)=>{const f=FOODS.find(x=>x.n===r.name);const c=document.createElement('span');c.className='chip'+(i===0?' top':'');
-      c.innerHTML=`${esc(r.name)}<small>${r0(r.score*100)}%</small>`;c.onclick=()=>pickCandidate(f);$('cands').appendChild(c)});
-    const other=document.createElement('span');other.className='chip';other.textContent='都不是 ✏️';other.onclick=()=>{$('entry').value='';$('entry').focus();renderPreview()};$('cands').appendChild(other);
-    pickCandidate(FOODS.find(x=>x.n===res[0].name),true);
+    const pv=$('preview'); pv.src=URL.createObjectURL(blob); pv.style.display='block';
+    $('previewWrap').classList.add('show');
+    $('cropBtn').hidden=false; $('addMoreBtn').hidden=false;
+    lastPreviewImg=await blobToImage(blob);
+    const {cands,ms,tiles}=await classifyMulti(blob,(i,n)=>setStatus(`辨識中（區塊 ${i+1}/${n}）…`));
+    window.__lastPreds=cands.map(c=>({name:c.name,score:c.score,tile:c.tile,hits:c.hits}));
+    window.__lastTiles=tiles.map(t=>({tag:t.tag,top:t.top}));
+    window.__lastMultiMs=ms;
+    const built=recItemsFromCands(cands);
+    recItems=built.items;
+    renderRecList();
+    if(built.dominant&&recItems[0]) pickCandidate(recItems[0].food,true);
+    const names=cands.map(c=>`${c.name} ${r0(c.score*100)}%`).join('、');
+    setStatus(`辨識完成（${(ms/1000).toFixed(1)} 秒）${cands.length? '：'+names+'。': '。'}請勾選照片裡有的食物、調整份量後一次加入。也可框選某一塊再辨識。`+(cands[0]&&cands[0].score<0.2?' ⚠️ 信心不高，請確認或改手動輸入。':''));
   }catch(e){console.error(e);setStatus('辨識失敗：'+(e.message||e)+'。可直接在下方手動輸入。')}
 }
 function pickCandidate(f,silent){
@@ -899,6 +1176,107 @@ function pickCandidate(f,silent){
 }
 $('camInput').onchange=e=>{onPhoto(e.target.files[0]);e.target.value=''};
 $('fileInput').onchange=e=>{onPhoto(e.target.files[0]);e.target.value=''};
+
+$('addRecBtn').onclick=()=>{
+  const sel=recItems.filter(x=>x.checked).map(recCalc).filter(e=>e&&!e.error);
+  if(!sel.length){toast('請先勾選要加入的食物');return}
+  const now=Date.now(), isToday=curDate===ymd(new Date());
+  const list=LOG[curDate]=dayEntries(curDate);
+  for(const e of sel){
+    list.push({id:uid(),t:isToday?now:new Date(curDate+'T12:00').getTime(),name:e.name,portion:e.portion,grams:e.noGram?null:e.grams,k:e.k,p:e.p,f:e.f,c:e.c,fb:e.fb,na:e.na,src:e.src||'clip'});
+  }
+  save(LS_LOG,LOG); renderAll();
+  const added=new Set(sel.map(e=>e.name));
+  recItems.forEach(it=>{if(added.has(it.name))it.checked=false});
+  renderRecList();
+  $('entry').value=''; renderPreview();
+  toast(`已加入 ${sel.length} 項到 ${curDate===ymd(new Date())?'今天':curDate}`);
+  setStatus(`已加入 ${sel.length} 項。可再勾選其他項，或點「再加一樣」手動輸入。`);
+};
+$('addMoreBtn').onclick=()=>{
+  $('entry').value=''; renderPreview();
+  $('entry').focus();
+  $('entry').scrollIntoView({behavior:'smooth',block:'center'});
+  toast('輸入下一樣，或繼續勾選上方食物後加入');
+};
+$('bentoBtn').onclick=()=>{
+  const have=new Set(recItems.map(x=>x.name));
+  for(const p of BENTO_PRESET){
+    const f=FOODS.find(x=>x.n===p.n); if(!f)continue;
+    if(have.has(p.n)){
+      const it=recItems.find(x=>x.name===p.n);
+      it.portion=p.portion;
+      if(p.checked)it.checked=true;
+    }else{
+      recItems.push(makeRecItem(f,{portion:p.portion,checked:p.checked,source:'preset',forceMulti:true}));
+    }
+  }
+  renderRecList();
+  setStatus('已套用便當組合（主菜請勾選 1 樣，白飯與燙青菜已預選，配菜可再勾）。份量以便當常見大小估計，請再調整。');
+  toast('已帶入便當快速組合');
+};
+
+function setCropMode(on){
+  cropMode=on;
+  $('previewWrap').classList.toggle('cropping',on);
+  $('cropCancel').hidden=!on;
+  $('cropBtn').hidden=on||!lastImageBlob;
+  const r=$('cropRect'); r.style.display='none';
+  if(on)setStatus('在照片上拖曳出要辨識的區域，放開後只辨識這一塊。可連續框選。');
+}
+$('cropBtn').onclick=()=>setCropMode(true);
+$('cropCancel').onclick=()=>setCropMode(false);
+
+(function setupCrop(){
+  const wrap=$('previewWrap'), rect=$('cropRect'), img=$('preview');
+  let start=null;
+  function pos(e){
+    const ev=e.touches?e.touches[0]:e;
+    const r=img.getBoundingClientRect();
+    const x=Math.min(Math.max(ev.clientX-r.left,0),r.width);
+    const y=Math.min(Math.max(ev.clientY-r.top,0),r.height);
+    return {x,y,rw:r.width,rh:r.height};
+  }
+  function showRect(a,b){
+    const x=Math.min(a.x,b.x), y=Math.min(a.y,b.y), w=Math.abs(a.x-b.x), h=Math.abs(a.y-b.y);
+    rect.style.display='block'; rect.style.left=x+'px'; rect.style.top=y+'px'; rect.style.width=w+'px'; rect.style.height=h+'px';
+  }
+  async function finish(a,b){
+    const x=Math.min(a.x,b.x), y=Math.min(a.y,b.y), w=Math.abs(a.x-b.x), h=Math.abs(a.y-b.y);
+    rect.style.display='none'; start=null;
+    if(w<16||h<16||!lastPreviewImg)return;
+    const sx=lastPreviewImg.naturalWidth/a.rw, sy=lastPreviewImg.naturalHeight/a.rh;
+    const box={x:x*sx,y:y*sy,w:w*sx,h:h*sy};
+    try{
+      setStatus('正在辨識框選區域…');
+      const blob=await cropImage(lastPreviewImg,box);
+      const t0=performance.now();
+      const logits=await logitsFromBlob(blob);
+      const top=rankedFromLogits(logits,5);
+      window.__lastCrop=top;
+      const add=top.filter((r,i)=>i===0||r.score>=0.15).slice(0,3);
+      add.forEach((r,i)=>{
+        const f=FOODS.find(x=>x.n===r.name); if(!f)return;
+        upsertRecFood(f,{score:r.score,source:'crop',checked:i===0||r.score>=0.2,forceMulti:true});
+      });
+      renderRecList();
+      setStatus(`框選辨識完成（${((performance.now()-t0)/1000).toFixed(1)} 秒）：${top.slice(0,3).map(r=>r.name+' '+r0(r.score*100)+'%').join('、')}。可繼續框選或勾選後加入。`);
+    }catch(e){setStatus('框選辨識失敗：'+(e.message||e))}
+  }
+  wrap.addEventListener('pointerdown',e=>{
+    if(!cropMode||e.target!==img)return;
+    e.preventDefault(); start=pos(e); showRect(start,start);
+    try{wrap.setPointerCapture(e.pointerId)}catch(_){}
+  });
+  wrap.addEventListener('pointermove',e=>{
+    if(!cropMode||!start)return;
+    e.preventDefault(); showRect(start,pos(e));
+  });
+  wrap.addEventListener('pointerup',e=>{
+    if(!cropMode||!start)return;
+    e.preventDefault(); const b=pos(e); const a=start; finish(a,b);
+  });
+})();
 
 // ───────────────── AI 高精準模式（使用者自備金鑰）─────────────────
 const AI_PROMPT=`你是營養師。辨識照片中的每一樣食物，估計份量(公克)與營養。只回傳 JSON，格式：
@@ -924,23 +1302,34 @@ async function aiRecognize(blob){
   const items=(extractJson(text).items||[]).filter(x=>x&&x.name&&isFinite(+x.kcal));
   return items;
 }
+function recItemsFromAi(items){
+  const out=[]; const parts=[];
+  for(const x of items){
+    const g=+x.grams>0?+x.grams:100, s=100/g, name=String(x.name).trim();
+    let food=FOODS.find(f=>f.n===name)||SESSION.find(f=>f.n===name);
+    if(!food){
+      food={n:name,a:[],k:+x.kcal*s,p:(+x.protein||0)*s,f:(+x.fat||0)*s,c:(+x.carbs||0)*s,fb:(+x.fiber||0)*s,na:(+x.sodium_mg||0)*s,u:{份:g},d:'份',src:'ai'};
+      SESSION=SESSION.filter(f=>f.n!==name); SESSION.unshift(food);
+    }
+    out.push(makeRecItem(food,{portion:r0(g)+'g',checked:true,source:'ai',forceMulti:items.length>1}));
+    parts.push(`${name} ${r0(g)}g`);
+  }
+  return {items:out,parts};
+}
 $('aiBtn').onclick=async()=>{
   if(!lastImageBlob)return; $('aiBtn').disabled=true; setStatus('AI 辨識中（照片已傳送到你設定的服務）…');
   try{
     const items=await aiRecognize(lastImageBlob);
     if(!items.length){setStatus('AI 沒有找到食物');return}
-    const parts=[];
-    for(const x of items){
-      const g=+x.grams>0?+x.grams:100, s=100/g, name=String(x.name).trim();
-      SESSION=SESSION.filter(f=>f.n!==name);
-      SESSION.unshift({n:name,a:[],k:+x.kcal*s,p:(+x.protein||0)*s,f:(+x.fat||0)*s,c:(+x.carbs||0)*s,fb:(+x.fiber||0)*s,na:(+x.sodium_mg||0)*s,u:{份:g},d:'份',src:'ai'});
-      parts.push(`${name} ${r0(g)}g`);
-    }
-    $('entry').value=parts.join(' + ');renderPreview();
-    setStatus(`AI 找到 ${items.length} 樣食物，已填入下方，可直接修改公克數後加入。`);
+    const built=recItemsFromAi(items);
+    recItems=built.items;
+    renderRecList();
+    $('entry').value=built.parts.join(' + '); renderPreview();
+    setStatus(`AI 找到 ${items.length} 樣食物，已列入下方清單（含估計份量）。請確認後點「加入選取的 ${items.length} 項」，或先修改公克數。`);
   }catch(e){setStatus('AI 辨識失敗：'+(e.message||e))}
   finally{$('aiBtn').disabled=false}
 };
+
 
 // ───────────────── 離線支援與 PWA ─────────────────
 (function(){
