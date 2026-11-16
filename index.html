@@ -72,6 +72,10 @@ details summary{cursor:pointer;font-weight:600;font-size:16px}
 .install-bar.show{display:flex}
 #updateBar{position:fixed;left:50%;top:10px;transform:translateX(-50%);background:var(--g);color:#fff;padding:10px 18px;border-radius:999px;font-size:14px;font-weight:600;cursor:pointer;z-index:60;box-shadow:0 4px 16px rgba(15,157,118,.4);display:none;white-space:nowrap}
 #updateBar.show{display:block}
+.sug{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding:7px 0;border-bottom:1px solid #f0f2f1}
+.sug:last-child{border-bottom:none}
+.sug .lab{flex:1;min-width:0}
+.sug b{font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
@@ -158,7 +162,7 @@ details summary{cursor:pointer;font-weight:600;font-size:16px}
 <!-- 設定與備份 -->
 <section class="card">
 <details id="setDetails">
-  <summary>💾 備份 / 匯入 · 歷史 · 設定</summary>
+  <summary>💾 備份 / 匯入 · 個人資料 · 設定</summary>
   <h2 style="margin-top:14px">備份與匯出</h2>
   <div class="muted">所有資料只存在這個瀏覽器（localStorage）。換手機、清除瀏覽資料前請先下載 JSON 備份。<span id="lastBackup"></span></div>
   <div class="row" style="margin-top:8px">
@@ -168,12 +172,45 @@ details summary{cursor:pointer;font-weight:600;font-size:16px}
   </div>
   <h2 style="margin-top:16px">歷史紀錄</h2>
   <div class="hist" id="hist"></div>
+  <h2 style="margin-top:16px">個人資料</h2>
+  <div class="muted">輸入一次後會存在這台裝置，之後可隨時修改。用來估算基礎代謝（BMR）與每日建議熱量。</div>
+  <div class="grid2">
+    <div class="field"><label>身高 cm</label><input type="number" id="pfH" inputmode="decimal" min="80" max="250" step="0.1" placeholder="例如 159"></div>
+    <div class="field"><label>體重 kg</label><input type="number" id="pfW" inputmode="decimal" min="20" max="400" step="0.1" placeholder="例如 102.4"></div>
+    <div class="field"><label>年齡</label><input type="number" id="pfA" inputmode="numeric" min="10" max="120" placeholder="例如 25"></div>
+    <div class="field"><label>性別</label>
+      <select id="pfSex">
+        <option value="">請選擇</option>
+        <option value="F">女</option>
+        <option value="M">男</option>
+      </select>
+    </div>
+  </div>
+  <div class="field"><label>活動量</label>
+    <select id="pfAct">
+      <option value="1.2">久坐（1.2）— 幾乎不運動，多坐著工作</option>
+      <option value="1.375">輕度（1.375）— 每週運動 1–3 天</option>
+      <option value="1.55">中度（1.55）— 每週運動 3–5 天</option>
+      <option value="1.725">高度（1.725）— 每週運動 6–7 天</option>
+      <option value="1.9">非常高（1.9）— 勞力工作或一天兩練</option>
+    </select>
+  </div>
+  <div class="field"><label>體重目標（選填）</label>
+    <select id="pfGoal">
+      <option value="">未設定</option>
+      <option value="lose">減重</option>
+      <option value="maintain">維持</option>
+      <option value="gain">增重</option>
+    </select>
+  </div>
+  <div id="pfResult" style="margin-top:10px"></div>
+  <div class="muted" style="margin-top:8px">以上為估算值（Mifflin-St Jeor 公式），僅供日常參考，不是醫療建議。若正在使用醫師開立的藥物（例如猛健樂）或有其他醫療狀況，請依醫師／營養師指示調整，不要自行把熱量降得太低。</div>
   <h2 style="margin-top:16px">目標</h2>
   <div class="grid2">
     <div class="field"><label>每日熱量目標 kcal</label><input type="number" id="goalIn" inputmode="numeric"></div>
     <div class="field"><label>每日蛋白質目標 g</label><input type="number" id="protIn" inputmode="numeric"></div>
   </div>
-  <div class="muted" style="margin-top:4px">目標請依醫師／營養師建議設定。</div>
+  <div class="muted" style="margin-top:4px">目標請依醫師／營養師建議設定。也可由上方個人資料套用建議值。</div>
   <h2 style="margin-top:16px">AI 高精準模式（選用）</h2>
   <div class="muted">填入你自己的 API 金鑰後，拍照可改用雲端視覺 AI 辨識多道菜並估計份量。金鑰只存在此瀏覽器，照片會傳送到你選的服務商。不填也能正常使用。</div>
   <div class="field"><label>服務商</label><select id="aiProv"><option value="">不使用</option><option value="gemini">Google Gemini</option><option value="openai">OpenAI 相容 API</option></select></div>
@@ -337,7 +374,7 @@ const EMB={"model":"Xenova/clip-vit-base-patch16","dim":512,"n":133,"names":["�
 'use strict';
 // ───────────────── 基本工具 ─────────────────
 const $=id=>document.getElementById(id);
-const LS_LOG='calapp.log.v1', LS_SET='calapp.settings.v1', LS_CUS='calapp.custom.v1';
+const LS_LOG='calapp.log.v1', LS_SET='calapp.settings.v1', LS_CUS='calapp.custom.v1', LS_PRF='calapp.profile.v1';
 const r1=x=>Math.round(x*10)/10, r0=x=>Math.round(x);
 function load(k,d){try{const v=JSON.parse(localStorage.getItem(k));return v??d}catch(e){return d}}
 function save(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){alert('儲存失敗（瀏覽器空間不足或已停用儲存）：'+e.message)}}
@@ -351,7 +388,10 @@ function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2
 
 let LOG=load(LS_LOG,{});           // { 'YYYY-MM-DD': [entry,...] }
 let SET=Object.assign({goal:1500,prot:80,ai:{prov:'',base:'',model:'',key:''},lastBackup:null},load(LS_SET,{}));
+function defaultProfile(){return {height:'',weight:'',age:'',sex:'',activity:1.2,goal:''}}
 let CUSTOM=load(LS_CUS,[]);        // 自訂食物，格式同 FOODS（每 100 g）
+let PROFILE=Object.assign(defaultProfile(),load(LS_PRF,{}));
+
 let SESSION=[];                    // AI 回傳、此次使用的暫時食物
 let curDate=ymd(new Date());
 
@@ -595,7 +635,7 @@ async function copyText(txt){
 }
 $('copyDay').onclick=async()=>{if(await copyText(dayText(curDate)))toast('已複製這天的紀錄文字，可直接貼給營養師或助理')};
 function download(name,text,type){const b=new Blob([text],{type});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000)}
-function backupObj(){return {app:'photo-calorie-calculator',version:1,exportedAt:new Date().toISOString(),settings:{goal:SET.goal,prot:SET.prot},customFoods:CUSTOM,log:LOG}}
+function backupObj(){return {app:'photo-calorie-calculator',version:2,exportedAt:new Date().toISOString(),settings:{goal:SET.goal,prot:SET.prot},profile:PROFILE,customFoods:CUSTOM,log:LOG}}
 function markBackup(){SET.lastBackup=new Date().toLocaleString('zh-TW',{hour12:false});save(LS_SET,SET);renderAll()}
 $('dlJson').onclick=()=>{download(`熱量紀錄備份_${ymd(new Date())}.json`,JSON.stringify(backupObj(),null,1),'application/json');markBackup();toast('已下載 JSON 備份')};
 $('dlTxt').onclick=()=>{const days=Object.keys(LOG).filter(d=>LOG[d].length).sort();
@@ -612,6 +652,8 @@ function applyImport(data,mode){
   }
   for(const f of (data.customFoods||[])){if(f&&f.n&&isFinite(f.k)&&!CUSTOM.some(c=>c.n===f.n))CUSTOM.push(f)}
   if(data.settings){if(isFinite(data.settings.goal))SET.goal=+data.settings.goal;if(isFinite(data.settings.prot))SET.prot=+data.settings.prot}
+  if(data.profile&&typeof data.profile==='object'){PROFILE=validProfile(data.profile);save(LS_PRF,PROFILE)}
+  else if(mode==='replace'){PROFILE=defaultProfile();save(LS_PRF,PROFILE)}
   save(LS_LOG,LOG);save(LS_CUS,CUSTOM);save(LS_SET,SET);loadSettingsUI();renderAll();
   return {added,days};
 }
@@ -644,10 +686,131 @@ $('cSave').onclick=()=>{
   const v0=$('entry').value, seg=currentSegment(); $('entry').value=v0.slice(0,v0.length-seg.length)+(v0.length>seg.length?' ':'')+n+' 1份';renderPreview();toast('已儲存自訂食物「'+n+'」');
 };
 
+// ───────────────── 個人資料 / BMR ─────────────────
+const ACT_LIST=[1.2,1.375,1.55,1.725,1.9];
+function parseAct(v){const n=parseFloat(v);return ACT_LIST.find(a=>Math.abs(a-n)<1e-6)||1.2}
+function validProfile(p){
+  const out=defaultProfile(); if(!p||typeof p!=='object')return out;
+  const h=parseFloat(p.height),w=parseFloat(p.weight),a=parseFloat(p.age);
+  if(isFinite(h)&&h>0)out.height=h; if(isFinite(w)&&w>0)out.weight=w; if(isFinite(a)&&a>0)out.age=a;
+  if(p.sex==='F'||p.sex==='M')out.sex=p.sex;
+  if(p.activity!=null)out.activity=parseAct(p.activity);
+  if(p.goal==='lose'||p.goal==='maintain'||p.goal==='gain')out.goal=p.goal;
+  return out;
+}
+function bmiLabelTW(bmi){
+  if(bmi<18.5)return '過輕';
+  if(bmi<24)return '正常';
+  if(bmi<27)return '過重';
+  if(bmi<30)return '輕度肥胖';
+  if(bmi<35)return '中度肥胖';
+  return '重度肥胖';
+}
+/** Mifflin-St Jeor：男 10w+6.25h-5a+5；女 10w+6.25h-5a-161（w kg, h cm, a 歲） */
+function bmrMifflin(w,h,a,sex){
+  const base=10*w+6.25*h-5*a;
+  if(sex==='M')return base+5;
+  if(sex==='F')return base-161;
+  return NaN;
+}
+function computeProfile(p){
+  p=p||PROFILE;
+  const w=parseFloat(p.weight),h=parseFloat(p.height),a=parseFloat(p.age),sex=p.sex,act=parseAct(p.activity);
+  if(!(w>0&&h>0&&a>0&&(sex==='F'||sex==='M')))return null;
+  const bmr=bmrMifflin(w,h,a,sex), tdee=bmr*act, bmi=w/((h/100)**2);
+  const minK=sex==='F'?1200:1500;
+  const ibw=22*(h/100)*(h/100);
+  const overweight=bmi>=24;
+  const protW=overweight?ibw+0.25*(w-ibw):w;
+  return {
+    w,h,a,sex,act,bmr,tdee,bmi,bmiLabel:bmiLabelTW(bmi),
+    maintain:tdee, lose300:tdee-300, lose500:tdee-500, gain:tdee+300,
+    minK, floor:Math.max(bmr,minK), overweight, ibw, protW,
+    protLo:1.2*protW, protHi:1.6*protW, protMid:1.4*protW
+  };
+}
+function kcalWarns(kcal,c){
+  const w=[];
+  if(kcal<c.bmr-0.5)w.push(`低於基礎代謝 ${r0(c.bmr)} kcal`);
+  if(kcal<c.minK)w.push(`低於一般建議下限（${c.sex==='F'?'女性 1200':'男性 1500'} kcal）`);
+  return w;
+}
+function applyCalorieGoal(kcal,c){
+  const k=r0(kcal);
+  const warns=kcalWarns(kcal,c);
+  const go=()=>{SET.goal=k;save(LS_SET,SET);$('goalIn').value=k;renderAll();toast('已套用每日熱量目標 '+k+' kcal')};
+  if(warns.length){
+    if(!confirm(`建議值 ${k} kcal ${warns.join('，')}。長期低於此範圍可能造成營養不足，請先諮詢醫師或營養師。仍要套用嗎？`))return;
+  }
+  go();
+}
+function applyProteinGoal(c){
+  const g=r0(c.protMid);
+  SET.prot=g;save(LS_SET,SET);$('protIn').value=g;renderAll();
+  toast('已套用蛋白質目標 '+g+' g');
+}
+function sugRow(label,kcal,c,hi){
+  const k=r0(kcal), warns=kcalWarns(kcal,c);
+  const warnHtml=warns.length?`<div class="muted" style="color:#8a2f2c;margin-top:2px">⚠️ ${warns.join('；')}，不建議長期低於此範圍。</div>`:'';
+  const btn=`<button type="button" class="sm${hi?' pri':''}" data-kcal="${k}">套用</button>`;
+  return `<div class="sug"><div class="lab">${label}<div><b>${k}</b> kcal${warnHtml}</div></div>${btn}</div>`;
+}
+function renderProfile(){
+  const box=$('pfResult');
+  const c=computeProfile(PROFILE);
+  if(!c){box.innerHTML='<div class="muted">填完身高、體重、年齡、性別與活動量後，會顯示 BMR 與建議熱量。</div>';return}
+  const hi=PROFILE.goal||'';
+  const protNote=c.overweight
+    ?`體重屬${c.bmiLabel}範圍，蛋白質改以調整體重 ${r0(c.protW)} kg（參考 BMI 22 體重再加實際超出部分的 25%）估算，避免按實際體重高估。`
+    :`以實際體重 ${r1(c.w)} kg 計。`;
+  box.innerHTML=`<div class="pv">
+    <div class="nut" style="margin-bottom:8px">
+      <div><b id="pfBmr">${r0(c.bmr)}</b>BMR kcal</div>
+      <div><b id="pfTdee">${r0(c.tdee)}</b>TDEE kcal</div>
+      <div><b id="pfBmi">${r1(c.bmi)}</b>BMI</div>
+      <div style="grid-column:span 2"><b id="pfBmiLab">${esc(c.bmiLabel)}</b>體位（衛福部）</div>
+    </div>
+    <div class="muted" style="margin-bottom:6px">建議攝取（可套用為上方的每日目標）：</div>
+    ${sugRow('維持體重',c.maintain,c,hi==='maintain')}
+    ${sugRow('溫和減重（每日 −300 kcal）',c.lose300,c,hi==='lose')}
+    ${sugRow('減重（每日 −500 kcal）',c.lose500,c,false)}
+    ${sugRow('增重（每日 +300 kcal）',c.gain,c,hi==='gain')}
+    <div class="sug" style="align-items:center">
+      <div class="lab">蛋白質建議 <b id="pfProt">${r0(c.protLo)}–${r0(c.protHi)}</b> g（約 1.2–1.6 g/kg，建議取 ${r0(c.protMid)} g）
+        <div class="muted" style="margin-top:2px">${esc(protNote)}</div>
+      </div>
+      <button type="button" class="sm" id="pfApplyP">套用 ${r0(c.protMid)} g</button>
+    </div>
+  </div>`;
+  box.querySelectorAll('button[data-kcal]').forEach(btn=>{
+    btn.onclick=()=>applyCalorieGoal(+btn.dataset.kcal,c);
+  });
+  const pbtn=$('pfApplyP'); if(pbtn)pbtn.onclick=()=>applyProteinGoal(c);
+}
+function readProfileFromUI(){
+  PROFILE=validProfile({
+    height:$('pfH').value, weight:$('pfW').value, age:$('pfA').value,
+    sex:$('pfSex').value, activity:$('pfAct').value, goal:$('pfGoal').value
+  });
+  save(LS_PRF,PROFILE);
+  renderProfile();
+}
+function fillProfileUI(){
+  const p=PROFILE;
+  $('pfH').value=p.height===''||p.height==null?'':p.height;
+  $('pfW').value=p.weight===''||p.weight==null?'':p.weight;
+  $('pfA').value=p.age===''||p.age==null?'':p.age;
+  $('pfSex').value=p.sex||'';
+  $('pfAct').value=String(parseAct(p.activity));
+  $('pfGoal').value=p.goal||'';
+  renderProfile();
+}
+
 // ───────────────── 設定 ─────────────────
 function loadSettingsUI(){
   $('goalIn').value=SET.goal;$('protIn').value=SET.prot;
   $('aiProv').value=SET.ai.prov||'';$('aiBase').value=SET.ai.base||'';$('aiModel').value=SET.ai.model||'';$('aiKey').value=SET.ai.key||'';
+  fillProfileUI();
   updAiUI();
 }
 function updAiUI(){
@@ -658,6 +821,8 @@ function updAiUI(){
 $('aiProv').onchange=updAiUI;
 $('goalIn').onchange=()=>{const v=parseInt($('goalIn').value);if(v>0){SET.goal=v;save(LS_SET,SET);renderAll()}};
 $('protIn').onchange=()=>{const v=parseInt($('protIn').value);SET.prot=v>0?v:0;save(LS_SET,SET);renderAll()};
+['pfH','pfW','pfA','pfSex','pfAct','pfGoal'].forEach(id=>$(id).addEventListener('change',readProfileFromUI));
+['pfH','pfW','pfA'].forEach(id=>$(id).addEventListener('input',readProfileFromUI));
 $('aiSave').onclick=()=>{SET.ai={prov:$('aiProv').value,base:$('aiBase').value.trim(),model:$('aiModel').value.trim(),key:$('aiKey').value.trim()};save(LS_SET,SET);updAiUI();toast('已儲存 AI 設定（只存在此瀏覽器）')};
 $('aiClear').onclick=()=>{SET.ai.key='';$('aiKey').value='';save(LS_SET,SET);updAiUI();toast('已清除金鑰')};
 
