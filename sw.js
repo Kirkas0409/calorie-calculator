@@ -1,6 +1,6 @@
 // 拍照熱量計算機 service worker
 // 靜態資源用版本化快取（更新時會清掉舊版）；CDN / Hugging Face 模型另存，避免更新網頁時重抓 88 MB。
-const STATIC_CACHE = 'calapp-static-v3';
+const STATIC_CACHE = 'calapp-static-v4';
 const CDN_CACHE = 'calapp-cdn';
 const KEEP = new Set([STATIC_CACHE, CDN_CACHE, 'transformers-cache']);
 
